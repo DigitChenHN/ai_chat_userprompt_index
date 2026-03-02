@@ -981,22 +981,51 @@
         sidebarElement = document.createElement('div');
         sidebarElement.id = 'ai-prompt-sidebar';
 
-        sidebarElement.innerHTML = `
-            <div class="collapsed-dots"></div>
-            <div class="sidebar-content">
-                <div class="prompt-sidebar-header">
-                    <h3 class="prompt-sidebar-title">对话索引</h3>
-                    <span class="prompt-sidebar-count">0</span>
-                </div>
-                <div class="prompt-list">
-                    <div class="prompt-empty">暂无对话内容</div>
-                </div>
-                <div class="prompt-actions">
-                    <button class="prompt-action-btn" id="prompt-refresh">刷新</button>
-                    <button class="prompt-action-btn" id="prompt-clear">清空</button>
-                </div>
-            </div>
-        `;
+        sidebarElement.innerHTML = '';
+        // 使用纯 DOM 操作创建元素（避免 innerHTML 在 CSP 严格页面报错）
+        // collapsed-dots
+        const collapsedDots = document.createElement('div');
+        collapsedDots.className = 'collapsed-dots';
+        // sidebar-content
+        const sidebarContent = document.createElement('div');
+        sidebarContent.className = 'sidebar-content';
+        // prompt-sidebar-header
+        const header = document.createElement('div');
+        header.className = 'prompt-sidebar-header';
+        const title = document.createElement('h3');
+        title.className = 'prompt-sidebar-title';
+        title.textContent = '对话索引';
+        const count = document.createElement('span');
+        count.className = 'prompt-sidebar-count';
+        count.textContent = '0';
+        header.appendChild(title);
+        header.appendChild(count);
+        // prompt-list
+        const promptList = document.createElement('div');
+        promptList.className = 'prompt-list';
+        const promptEmpty = document.createElement('div');
+        promptEmpty.className = 'prompt-empty';
+        promptEmpty.textContent = '暂无对话内容';
+        promptList.appendChild(promptEmpty);
+        // prompt-actions
+        const actions = document.createElement('div');
+        actions.className = 'prompt-actions';
+        const refreshBtn = document.createElement('button');
+        refreshBtn.className = 'prompt-action-btn';
+        refreshBtn.id = 'prompt-refresh';
+        refreshBtn.textContent = '刷新';
+        const clearBtn = document.createElement('button');
+        clearBtn.className = 'prompt-action-btn';
+        clearBtn.id = 'prompt-clear';
+        clearBtn.textContent = '清空';
+        actions.appendChild(refreshBtn);
+        actions.appendChild(clearBtn);
+        // 组装
+        sidebarContent.appendChild(header);
+        sidebarContent.appendChild(promptList);
+        sidebarContent.appendChild(actions);
+        sidebarElement.appendChild(collapsedDots);
+        sidebarElement.appendChild(sidebarContent);
 
         // 尝试在Shadow DOM中创建
         const shadowRoot = findShadowRoot();
@@ -1204,7 +1233,7 @@
         makeSidebarDraggable(sidebarElement);
     }
 
-    // 更新侧边栏显示
+    // 更新侧边栏显示（使用纯 DOM 操作避免 CSP 问题）
     function updateSidebar() {
         if (!sidebarElement) return;
 
@@ -1214,29 +1243,56 @@
 
         countEl.textContent = promptIndex.length;
 
+        // 清空现有内容
+        while (listEl.firstChild) {
+            listEl.removeChild(listEl.firstChild);
+        }
+        while (dotsEl.firstChild) {
+            dotsEl.removeChild(dotsEl.firstChild);
+        }
+
         // 更新展开状态的列表
         if (promptIndex.length === 0) {
-            listEl.innerHTML = '<div class="prompt-empty">暂无对话内容</div>';
-            dotsEl.innerHTML = '';
+            const emptyDiv = document.createElement('div');
+            emptyDiv.className = 'prompt-empty';
+            emptyDiv.textContent = '暂无对话内容';
+            listEl.appendChild(emptyDiv);
             return;
         }
 
         // 更新列表
-        listEl.innerHTML = promptIndex.map((item, idx) => `
-            <div class="prompt-item ${idx === currentActiveIndex ? 'active' : ''}" data-index="${idx}">
-                <span class="prompt-number">${idx + 1}</span>
-                <div style="flex: 1; min-width: 0;">
-                    <div class="prompt-text">${escapeHtml(item.text)}</div>
-                </div>
-            </div>
-        `).join('');
+        promptIndex.forEach((item, idx) => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'prompt-item' + (idx === currentActiveIndex ? ' active' : '');
+            itemDiv.dataset.index = idx;
+
+            const numberSpan = document.createElement('span');
+            numberSpan.className = 'prompt-number';
+            numberSpan.textContent = idx + 1;
+
+            const textContainer = document.createElement('div');
+            textContainer.style.flex = '1';
+            textContainer.style.minWidth = '0';
+
+            const textDiv = document.createElement('div');
+            textDiv.className = 'prompt-text';
+            textDiv.textContent = item.text;
+
+            textContainer.appendChild(textDiv);
+            itemDiv.appendChild(numberSpan);
+            itemDiv.appendChild(textContainer);
+            listEl.appendChild(itemDiv);
+        });
 
         // 更新圆点导航
-        dotsEl.innerHTML = promptIndex.map((item, idx) => `
-            <div class="prompt-dot ${idx === currentActiveIndex ? 'active' : ''}" data-index="${idx}" title="${escapeHtml(item.text)}">
-                ${idx + 1}
-            </div>
-        `).join('');
+        promptIndex.forEach((item, idx) => {
+            const dotDiv = document.createElement('div');
+            dotDiv.className = 'prompt-dot' + (idx === currentActiveIndex ? ' active' : '');
+            dotDiv.dataset.index = idx;
+            dotDiv.title = item.text;
+            dotDiv.textContent = idx + 1;
+            dotsEl.appendChild(dotDiv);
+        });
     }
 
     // HTML转义
