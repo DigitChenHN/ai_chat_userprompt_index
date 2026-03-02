@@ -555,6 +555,92 @@
         return text;
     }
 
+    // 加载所有历史消息（针对千问页面的虚拟滚动）
+    async function loadAllMessages(platform) {
+        if (platform !== 'qianwen') return; // 只处理千问页面
+
+        console.log('[AI Prompt Index] 开始加载所有历史消息...');
+
+        const selector = getUserMessageSelector(platform);
+        console.log('[AI Prompt Index] 使用选择器:', selector);
+
+        // 先等待页面基本内容加载
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        // 首次检查
+        let messages = document.querySelectorAll(selector);
+        console.log('[AI Prompt Index] 初始消息数量:', messages.length);
+
+        // 如果初始就有消息，说明页面已经加载完成，直接返回
+        if (messages.length > 0) {
+            console.log('[AI Prompt Index] 已有消息，开始滚动加载历史消息...');
+        } else {
+            console.log('[AI Prompt Index] 尚未找到消息，等待更长时间...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            messages = document.querySelectorAll(selector);
+            console.log('[AI Prompt Index] 等待后消息数量:', messages.length);
+        }
+
+        let lastCount = 0;
+        let maxAttempts = 20; // 增加最大尝试次数
+        let attempts = 0;
+        let consecutiveNoChange = 0; // 连续无变化次数
+
+        while (attempts < maxAttempts) {
+            const currentCount = document.querySelectorAll(selector).length;
+            console.log(`[AI Prompt Index] 第${attempts + 1}次尝试，当前消息数量：${currentCount}`);
+
+            // 找到滚动容器
+            const scrollContainer = document.querySelector('.message-list-scroll-container') ||
+                                    document.querySelector('[class*="scrollContainer"]') ||
+                                    document.querySelector('[class*="messageList"]') ||
+                                    document.querySelector('[class*="chatList"]') ||
+                                    document.querySelector('[class*="content"]') ||
+                                    document.documentElement;
+
+            // 滚动到底部再返回顶部，触发历史消息加载
+            if (scrollContainer !== document.documentElement) {
+                // 先记录当前滚动位置
+                const originalScrollTop = scrollContainer.scrollTop;
+                // 滚动到底部
+                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                await new Promise(resolve => setTimeout(resolve, 500));
+                // 滚动到顶部
+                scrollContainer.scrollTop = 0;
+                await new Promise(resolve => setTimeout(resolve, 800));
+                // 恢复原始滚动位置
+                scrollContainer.scrollTop = originalScrollTop;
+            } else {
+                // 如果是 documentElement，使用 window 滚动
+                const originalScrollY = window.scrollY;
+                window.scrollTo(0, document.body.scrollHeight);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                window.scrollTo(0, 0);
+                await new Promise(resolve => setTimeout(resolve, 800));
+                window.scrollTo(0, originalScrollY);
+            }
+
+            // 检查是否有新消息
+            const newMessages = document.querySelectorAll(selector);
+            if (newMessages.length === currentCount) {
+                consecutiveNoChange++;
+                console.log(`[AI Prompt Index] 连续${consecutiveNoChange}次无变化`);
+                if (consecutiveNoChange >= 2 && currentCount > 0) {
+                    console.log('[AI Prompt Index] 没有新消息，加载完成');
+                    break;
+                }
+            } else {
+                consecutiveNoChange = 0;
+                console.log(`[AI Prompt Index] 发现新消息，当前总数：${newMessages.length}`);
+            }
+
+            lastCount = newMessages.length;
+            attempts++;
+        }
+
+        console.log('[AI Prompt Index] 历史消息加载完成，最终消息数量:', lastCount);
+    }
+
     // 扫描页面中的用户消息
     function scanMessages() {
         const platform = detectPlatform();
@@ -1453,7 +1539,7 @@
     }
 
     // 初始化
-    function init() {
+    async function init() {
         console.log('[AI Prompt Index] 初始化中...');
 
         // 等待页面加载完成
@@ -1464,6 +1550,12 @@
 
         // 创建侧边栏
         createSidebar();
+
+        // 千问页面：先加载所有历史消息
+        const platform = detectPlatform();
+        if (platform === 'qianwen') {
+            await loadAllMessages(platform);
+        }
 
         // 初始扫描（延迟以确保页面完全加载）
         setTimeout(scanMessages, 2000);
