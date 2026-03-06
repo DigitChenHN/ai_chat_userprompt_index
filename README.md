@@ -17,7 +17,7 @@
 |------|-----|------|
 | 通义千问 | https://www.qianwen.com/chat* | 已支持 |
 | Kimi | https://www.kimi.com/* | 已支持 |
-| Gemini | https://gemini.google.com/* | 存在问题 |
+| Gemini | https://gemini.google.com/* | 已支持 |
 | ChatGPT | https://chatgpt.com/* | 已支持 |
 
 ## 安装方法
