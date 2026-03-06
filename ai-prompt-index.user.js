@@ -436,8 +436,8 @@
             'qianwen': '.questionItem-MPmrIl, [class^="questionItem-"], [class*="questionItem-"]',
             // Kimi: 使用user-content类
             'kimi': '.user-content, [class*="user-content"]',
-            // Gemini: 使用user-query相关类
-            'gemini': '.user-query-bubble-with-background, .query-text, [class*="user-query"]',
+            // Gemini: 使用最外层的用户查询气泡容器
+            'gemini': '.user-query-bubble-with-background',
             // ChatGPT: 使用user-message-bubble-color类
             'chatgpt': '.user-message-bubble-color, [class*="user-message-bubble"]'
         };
@@ -660,6 +660,7 @@
 
         // 过滤和提取
         const newPromptIndex = [];
+        const seenTexts = new Set(); // 用于去重
 
         messages.forEach((msg, index) => {
             // 验证元素
@@ -669,6 +670,13 @@
 
             const text = extractMessageText(msg, platform);
             if (text) {
+                // 去重：如果文本已经存在，跳过
+                if (seenTexts.has(text)) {
+                    console.log('[AI Prompt Index] 跳过重复消息:', text.substring(0, 30));
+                    return;
+                }
+                seenTexts.add(text);
+
                 // 创建定位器而不是存储元素引用
                 const locator = createElementLocator(msg, platform);
                 locator.index = index; // 保存索引作为后备
@@ -981,7 +989,6 @@
         sidebarElement = document.createElement('div');
         sidebarElement.id = 'ai-prompt-sidebar';
 
-        sidebarElement.innerHTML = '';
         // 使用纯 DOM 操作创建元素（避免 innerHTML 在 CSP 严格页面报错）
         // collapsed-dots
         const collapsedDots = document.createElement('div');
@@ -1627,7 +1634,7 @@
         }, { passive: true });
 
         // 定期刷新
-        setInterval(scanMessages, 5000);
+        setInterval(scanMessages, 10000);
 
         console.log('[AI Prompt Index] 初始化完成');
     }
