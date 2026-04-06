@@ -61,7 +61,7 @@
         const text = element.textContent || element.innerText || '';
         if (text) {
             // 使用前30个字符的简化哈希作为标识
-            locator.textHash = text.trim().substring(0, 30).replace(/\s+/g, ' ');
+            locator.textHash = text.trim().substring(0, 50).replace(/\s+/g, ' ');
         }
 
         // 收集data属性（Kimi等平台常用）
@@ -118,7 +118,7 @@
             console.log('[AI Prompt Index] findElementByLocator: Kimi平台，优先尝试文本匹配，目标 textHash:', locator.textHash);
             for (let i = 0; i < candidates.length; i++) {
                 const el = candidates[i];
-                const elText = (el.textContent || el.innerText || '').trim().substring(0, 30).replace(/\s+/g, ' ');
+                const elText = (el.textContent || el.innerText || '').trim().substring(0, 50).replace(/\s+/g, ' ');
                 if (elText === locator.textHash) {
                     console.log('[AI Prompt Index] findElementByLocator: 通过文本找到元素，索引：', i);
                     return el;
@@ -161,7 +161,7 @@
             console.log('[AI Prompt Index] findElementByLocator: 尝试文本匹配，目标  textHash:', locator.textHash);
             for (let i = 0; i < candidates.length; i++) {
                 const el = candidates[i];
-                const elText = (el.textContent || el.innerText || '').trim().substring(0, 30).replace(/\s+/g, ' ');
+                const elText = (el.textContent || el.innerText || '').trim().substring(0, 50).replace(/\s+/g, ' ');
                 
                 if (elText === locator.textHash) {
                     console.log('[AI Prompt Index] findElementByLocator: 通过文本找到元素，索引:', i);
@@ -555,11 +555,105 @@
         return text;
     }
 
-    // 加载所有历史消息（针对千问页面的虚拟滚动）
-    async function loadAllMessages(platform) {
-        if (platform !== 'qianwen') return; // 只处理千问页面
+    // Gemini 专用：使用 scrollIntoView 加载历史消息
+    async function loadGeminiHistory(maxAttempts = 10) {
+        const selector = '.user-query-bubble-with-background';
+        console.log('[AI Prompt Index] 开始加载 Gemini 历史消息...');
 
-        console.log('[AI Prompt Index] 开始加载所有历史消息...');
+        let attempts = 0;
+        let consecutiveNoChange = 0;
+        let lastCount = 0;
+        let zeroCountChecks = 0; // 记录连续检测到0消息的次数
+
+        // 先等待页面加载
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // 检查初始消息数量，如果为0则多次等待
+        let initialMessages = document.querySelectorAll(selector);
+        console.log('[AI Prompt Index] Gemini 初始消息数量:', initialMessages.length);
+
+        // 如果消息数量为0，等待并重新检查（最多3次）
+        while (initialMessages.length === 0 && zeroCountChecks < 3) {
+            zeroCountChecks++;
+            console.log(`[AI Prompt Index] 消息数量为0，第${zeroCountChecks}次等待...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            initialMessages = document.querySelectorAll(selector);
+            console.log('[AI Prompt Index] 再次检查后消息数量:', initialMessages.length);
+        }
+
+        // 如果多次检查后仍然为0，可能是真的没有消息
+        if (initialMessages.length === 0) {
+            console.log('[AI Prompt Index] 多次检查后消息数量仍为0，可能真的没有消息');
+            return;
+        }
+
+        // 如果消息数量 < 5，可能是全部消息，尝试一次滚动确认
+        if (initialMessages.length < 5) {
+            console.log('[AI Prompt Index] 消息数量 < 5，尝试滚动确认是否有更多...');
+            const firstMessage = initialMessages[0];
+            if (firstMessage) {
+                firstMessage.scrollIntoView({ behavior: 'auto', block: 'start' });
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                const afterScroll = document.querySelectorAll(selector);
+                if (afterScroll.length === initialMessages.length) {
+                    console.log('[AI Prompt Index] 滚动后无变化，确认已是全部消息');
+                    return;
+                }
+                console.log('[AI Prompt Index] 滚动后发现新消息，继续加载');
+            }
+        }
+
+        while (attempts < maxAttempts) {
+            const messages = document.querySelectorAll(selector);
+            const currentCount = messages.length;
+            console.log(`[AI Prompt Index] Gemini 第${attempts + 1}次尝试，当前消息数：${currentCount}`);
+
+            // 找到第一个消息元素并滚动到它
+            const firstMessage = messages[0];
+            if (firstMessage) {
+                firstMessage.scrollIntoView({ behavior: 'auto', block: 'start' });
+                console.log('[AI Prompt Index] 滚动到第一个消息元素');
+            }
+
+            // 等待加载（Gemini 需要更长时间）
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // 检查是否有新消息
+            const newMessages = document.querySelectorAll(selector);
+            if (newMessages.length === currentCount) {
+                consecutiveNoChange++;
+                console.log(`[AI Prompt Index] 连续${consecutiveNoChange}次无变化`);
+                if (consecutiveNoChange >= 2 && currentCount > 0) {
+                    console.log('[AI Prompt Index] Gemini 没有更多消息，加载完成');
+                    break;
+                }
+            } else {
+                consecutiveNoChange = 0;
+                console.log(`[AI Prompt Index] Gemini 发现新消息，当前总数：${newMessages.length}`);
+                lastCount = newMessages.length;
+            }
+
+            attempts++;
+        }
+
+        console.log('[AI Prompt Index] Gemini 历史消息加载完成，最终消息数量:', lastCount);
+    }
+
+    // 加载所有历史消息（针对千问和Gemini页面的虚拟滚动）
+    // 可选参数：maxAttempts - 最大尝试次数，force - 是否强制重新加载
+    async function loadAllMessages(platform, maxAttempts = 10, force = false) {
+        // 只处理支持虚拟滚动的平台
+        if (platform !== 'qianwen' && platform !== 'gemini') return;
+
+        // Gemini 使用专门的加载方式
+        if (platform === 'gemini') {
+            await loadGeminiHistory(maxAttempts);
+            return;
+        }
+
+        // 以下是千问的加载逻辑
+        console.log(`[AI Prompt Index] 开始加载${platform}历史消息...`, force ? '(强制重新加载)' : '');
 
         const selector = getUserMessageSelector(platform);
         console.log('[AI Prompt Index] 使用选择器:', selector);
@@ -567,36 +661,54 @@
         // 先等待页面基本内容加载
         await new Promise(resolve => setTimeout(resolve, 1500));
 
-        // 首次检查
-        let messages = document.querySelectorAll(selector);
-        console.log('[AI Prompt Index] 初始消息数量:', messages.length);
+        // 检查当前消息数量
+        let initialMessages = document.querySelectorAll(selector);
+        console.log('[AI Prompt Index] 初始消息数量:', initialMessages.length);
 
-        // 如果初始就有消息，说明页面已经加载完成，直接返回
-        if (messages.length > 0) {
-            console.log('[AI Prompt Index] 已有消息，开始滚动加载历史消息...');
-        } else {
-            console.log('[AI Prompt Index] 尚未找到消息，等待更长时间...');
+        // 如果消息数量为 0，可能是页面还在加载中，再等待一段时间
+        if (initialMessages.length === 0) {
+            console.log('[AI Prompt Index] 消息数量为 0，等待页面加载...');
             await new Promise(resolve => setTimeout(resolve, 2000));
-            messages = document.querySelectorAll(selector);
-            console.log('[AI Prompt Index] 等待后消息数量:', messages.length);
+            initialMessages = document.querySelectorAll(selector);
+            console.log('[AI Prompt Index] 再次检查后消息数量:', initialMessages.length);
         }
 
-        let lastCount = 0;
-        let maxAttempts = 20; // 增加最大尝试次数
+        // 虚拟滚动机制：
+        // - 消息数量 < 5 条：说明已经是全部消息，不需要滚动加载
+        // - 消息数量 >= 5 条：可能还有更多历史消息，需要滚动加载
+        if (initialMessages.length < 5) {
+            console.log('[AI Prompt Index] 消息数量 < 5，已是全部消息，无需滚动加载');
+            return;
+        }
+
         let attempts = 0;
         let consecutiveNoChange = 0; // 连续无变化次数
+        let lastLoadedCount = initialMessages.length;
 
         while (attempts < maxAttempts) {
             const currentCount = document.querySelectorAll(selector).length;
             console.log(`[AI Prompt Index] 第${attempts + 1}次尝试，当前消息数量：${currentCount}`);
 
-            // 找到滚动容器
-            const scrollContainer = document.querySelector('.message-list-scroll-container') ||
-                                    document.querySelector('[class*="scrollContainer"]') ||
-                                    document.querySelector('[class*="messageList"]') ||
-                                    document.querySelector('[class*="chatList"]') ||
-                                    document.querySelector('[class*="content"]') ||
-                                    document.documentElement;
+            // 找到滚动容器（平台特定的选择器）
+            let scrollContainer;
+            if (platform === 'gemini') {
+                // Gemini 使用特定的滚动容器
+                scrollContainer = document.querySelector('main') ||
+                                  document.querySelector('[role="main"]') ||
+                                  document.querySelector('.conversation-container') ||
+                                  document.querySelector('[class*="scroll"]') ||
+                                  document.documentElement;
+            } else {
+                // 千问使用通用的滚动容器查找
+                scrollContainer = document.querySelector('.message-list-scroll-container') ||
+                                  document.querySelector('[class*="scrollContainer"]') ||
+                                  document.querySelector('[class*="messageList"]') ||
+                                  document.querySelector('[class*="chatList"]') ||
+                                  document.querySelector('[class*="content"]') ||
+                                  document.documentElement;
+            }
+
+            console.log('[AI Prompt Index] 使用滚动容器:', scrollContainer.tagName, scrollContainer.className?.substring(0, 50) || '');
 
             // 滚动到底部再返回顶部，触发历史消息加载
             if (scrollContainer !== document.documentElement) {
@@ -632,13 +744,99 @@
             } else {
                 consecutiveNoChange = 0;
                 console.log(`[AI Prompt Index] 发现新消息，当前总数：${newMessages.length}`);
+                lastLoadedCount = newMessages.length;
             }
 
-            lastCount = newMessages.length;
             attempts++;
         }
 
-        console.log('[AI Prompt Index] 历史消息加载完成，最终消息数量:', lastCount);
+        console.log('[AI Prompt Index] 历史消息加载完成，最终消息数量:', lastLoadedCount);
+    }
+
+    // 检查是否需要重新加载历史消息（用于对话切换检测）
+    // 虚拟滚动机制（千问和Gemini）：
+    // - 消息数量 < 5 条：已加载完所有消息，不需要重新加载
+    // - 消息数量 >= 5 条：可能还有更多历史消息，需要滚动加载
+    // 注意：此函数现在返回 Promise，需要 await 调用
+    async function shouldReloadHistory() {
+        const platform = detectPlatform();
+        if (platform !== 'qianwen' && platform !== 'gemini') return false;
+
+        const selector = getUserMessageSelector(platform);
+
+        // 先等待页面基本加载
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        let messages = document.querySelectorAll(selector);
+        let messageCount = messages.length;
+        let zeroCountChecks = 0;
+
+        console.log(`[AI Prompt Index] shouldReloadHistory (${platform}): 初始消息数量 = ${messageCount}`);
+
+        // 如果消息数量为0，多次等待重试
+        while (messageCount === 0 && zeroCountChecks < 3) {
+            zeroCountChecks++;
+            console.log(`[AI Prompt Index] 消息数量为0，第${zeroCountChecks}次等待...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            messages = document.querySelectorAll(selector);
+            messageCount = messages.length;
+            console.log(`[AI Prompt Index] 再次检查后消息数量 = ${messageCount}`);
+        }
+
+        // 虚拟滚动机制：
+        // 刚进入对话时最多加载 5 条消息
+        // - 如果消息数量 < 5：说明已加载完所有消息
+        // - 如果消息数量 >= 5：说明可能还有更多历史消息
+        if (messageCount >= 5) {
+            console.log(`[AI Prompt Index] 消息数量 >= 5，可能还有更多历史消息，建议重新加载`);
+            return true;
+        } else {
+            console.log(`[AI Prompt Index] 消息数量 < 5，已加载完所有消息，无需重新加载`);
+            return false;
+        }
+    }
+
+    // 检测对话是否切换
+    // 虚拟滚动机制（千问和Gemini）：
+    // - 切换到新对话时，消息数量会变化
+    // - 如果新对话有 >= 5 条消息，说明可能还有历史需要加载
+    function detectConversationSwitch() {
+        const platform = detectPlatform();
+        if (platform !== 'qianwen' && platform !== 'gemini') return false;
+
+        const selector = getUserMessageSelector(platform);
+        const messages = document.querySelectorAll(selector);
+        const currentMessageCount = messages.length;
+
+        // 存储上次检查的消息数量（按平台分别存储）
+        if (!window.lastMessageCount) {
+            window.lastMessageCount = {};
+        }
+        if (!window.lastMessageCount[platform]) {
+            window.lastMessageCount[platform] = currentMessageCount;
+            return false;
+        }
+
+        // 检测消息数量是否变化
+        const lastCount = window.lastMessageCount[platform];
+        const countChanged = currentMessageCount !== lastCount;
+
+        if (countChanged) {
+            console.log(`[AI Prompt Index] (${platform}) 检测到消息数量变化: ${lastCount} → ${currentMessageCount}`);
+            window.lastMessageCount[platform] = currentMessageCount;
+
+            // 虚拟滚动机制：如果新对话有 >= 5 条消息，说明可能还有历史
+            if (currentMessageCount >= 5) {
+                console.log(`[AI Prompt Index] 新对话有 >= 5 条消息，可能需要加载历史`);
+                return true;
+            } else {
+                console.log(`[AI Prompt Index] 新对话有 < 5 条消息，已加载完所有历史`);
+                return false;
+            }
+        }
+
+        window.lastMessageCount[platform] = currentMessageCount;
+        return false;
     }
 
     // 扫描页面中的用户消息
@@ -672,7 +870,7 @@
             if (text) {
                 // 去重：如果文本已经存在，跳过
                 if (seenTexts.has(text)) {
-                    console.log('[AI Prompt Index] 跳过重复消息:', text.substring(0, 30));
+                    console.log('[AI Prompt Index] 跳过重复消息:', text.substring(0, 50));
                     return;
                 }
                 seenTexts.add(text);
@@ -1469,7 +1667,7 @@
             const allElements = document.querySelectorAll(selector);
             console.log('[AI Prompt Index] 页面中所有匹配选择器"', selector, '"的元素数量:', allElements.length);
             allElements.forEach((el, i) => {
-                console.log('[AI Prompt Index] 元素' + i + ':', (el.textContent || '').substring(0, 30), 'dataset:', el.dataset);
+                console.log('[AI Prompt Index] 元素' + i + ':', (el.textContent || '').substring(0, 50), 'dataset:', el.dataset);
             });
             return;
         }
@@ -1562,14 +1760,37 @@
 
     // 使用MutationObserver监听DOM变化
     function observeChanges() {
-        const observer = new MutationObserver((mutations) => {
+        const platform = detectPlatform();
+        let lastUrl = window.location.href;
+
+        // 监听URL变化（对话切换）
+        const urlObserver = new MutationObserver(() => {
+            const currentUrl = window.location.href;
+            if (currentUrl !== lastUrl) {
+                console.log('[AI Prompt Index] 检测到URL变化，可能切换了对话:', currentUrl);
+                lastUrl = currentUrl;
+
+                // 如果是支持虚拟滚动的页面，检查是否需要重新加载历史消息
+                if (platform === 'qianwen' || platform === 'gemini') {
+                    setTimeout(async () => {
+                        const needReload = await shouldReloadHistory();
+                        if (needReload) {
+                            await loadAllMessages(platform, 8, true); // 使用较少的尝试次数
+                            scanMessages();
+                        }
+                    }, 500); // 减少初始延迟，因为 shouldReloadHistory 内部已经等待了
+                }
+            }
+        });
+
+        // 监听DOM变化（只用于更新索引，不触发历史消息加载）
+        const domObserver = new MutationObserver((mutations) => {
             let shouldUpdate = false;
 
             mutations.forEach(mutation => {
                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
                     mutation.addedNodes.forEach(node => {
                         if (node.nodeType === Node.ELEMENT_NODE) {
-                            const platform = detectPlatform();
                             const selector = getUserMessageSelector(platform);
 
                             if (!selector) return;
@@ -1591,11 +1812,20 @@
 
             if (shouldUpdate) {
                 clearTimeout(window.updateTimeout);
-                window.updateTimeout = setTimeout(scanMessages, 500);
+                window.updateTimeout = setTimeout(() => {
+                    scanMessages();
+                }, 500);
             }
         });
 
-        observer.observe(document.body, {
+        // 开始观察
+        urlObserver.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true
+        });
+
+        domObserver.observe(document.body, {
             childList: true,
             subtree: true
         });
@@ -1614,10 +1844,14 @@
         // 创建侧边栏
         createSidebar();
 
-        // 千问页面：先加载所有历史消息
+        // 千问和 Gemini 页面：先加载所有历史消息（支持虚拟滚动）
         const platform = detectPlatform();
-        if (platform === 'qianwen') {
-            await loadAllMessages(platform);
+        if (platform === 'qianwen' || platform === 'gemini') {
+            // 使用较少的尝试次数进行首次加载
+            await loadAllMessages(platform, 8);
+        } else {
+            // 其他平台直接扫描
+            setTimeout(scanMessages, 1000);
         }
 
         // 初始扫描（延迟以确保页面完全加载）
@@ -1633,8 +1867,14 @@
             scrollTimeout = setTimeout(handleScroll, 100);
         }, { passive: true });
 
-        // 定期刷新
-        setInterval(scanMessages, 10000);
+        // 定期刷新（只扫描消息，不自动加载历史）
+        // 千问页面的历史消息加载只在以下时机触发：
+        // 1. 首次进入页面时（上面的 loadAllMessages 调用）
+        // 2. URL变化（切换对话）时（在 observeChanges 中处理）
+        // 3. 手动点击刷新按钮
+        setInterval(() => {
+            scanMessages();
+        }, 10000);
 
         console.log('[AI Prompt Index] 初始化完成');
     }
